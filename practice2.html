@@ -1,0 +1,71 @@
+<script>
+    let data="infornamtion secutity"
+
+  class User{
+    constructor(name,email){
+        this.name = name;
+        this.email = email;
+
+    }
+
+    viewdata(){
+        console.log(data)
+    }
+  }
+
+  class admin extends User{
+
+
+    constructor(name,email) 
+    {super(name,email);    }
+    
+    
+    editdata() {
+        data= "any new data";
+
+    }
+
+  }
+
+  let student1 = new User( "ali" , "ali gmaill .com")
+  let student2 = new User( "axhar" , "soku .com")
+  let admin1= new admin ("sab", "admin@gmail")
+
+
+
+
+
+
+//   try catch metods 
+
+
+
+let a = 1;
+let b = 2;
+
+try{
+    console.log (a+b);
+console.log(a+c);
+
+
+
+
+}
+catch(err){
+    console.log(err);
+    
+document.write(err)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+</script>
