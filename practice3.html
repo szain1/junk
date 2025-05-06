@@ -1,0 +1,43 @@
+<script>
+// calls backs and timeout paractic
+
+function getData(a, b ){
+    setTimeout (
+        ()=> {console.log("after 2 secs", a);
+            if(b){
+                b()
+            }
+        }
+       
+       , 200
+    )
+}
+
+getData(1234 , () => {
+    getData(2, () => {
+    getData(444)
+})
+})
+
+
+
+let i=0;
+for(i=0;i<100;i++ )
+
+{
+    console.log("hi ",getData(1234 , () => {
+    getData(2, () => {
+    getData(444)
+})
+}))
+    getData(1234 , () => {
+    getData(2, () => {
+    getData(444)
+})
+})
+
+}
+
+
+
+</script>
