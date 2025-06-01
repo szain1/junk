@@ -228,6 +228,7 @@
       // Parse
       const constraints = constraintsExprs.map((e,i)=>parseConstraint(e,i));
       constraints.push({a:1, b:0, op:">=", c:0, label:"x ≥ 0"});
+      constraints.push({a:1, b:0, op:">=", c:0, label:"x ≥ 0"});
       constraints.push({a:0, b:1, op:">=", c:0, label:"y ≥ 0"});
       const objective = parseObjective(objExpr);
       // Find all intersection points
