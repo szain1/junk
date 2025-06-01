@@ -393,7 +393,7 @@
       });
       // Destroy previous
       if(chart) chart.destroy();
-      chart = new Chart(document.getElementById('graph-canvas').getContext('2d'), {
+      chart = new Chart(document.getElementById('graph').getContext('2d'), {
         type:"scatter",
         data:{datasets: datasets},
         options:{
