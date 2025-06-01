@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>2-Variable Graphical LP Solver</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Tooltip CSS -->
+  <style>
+    .tooltip {
+      position: relative;
+      cursor: pointer;
+    }
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: max-content;
+      background-color: #111827;
+      color: #fff;
+      text-align: left;
+      border-radius: 6px;
+      padding: 6px 10px;
+      position: absolute;
+      z-index: 10;
+      left: 110%;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0;
+      transition: opacity 0.2s;
+      font-size: 0.9em;
+      min-width: 180px;
+    }
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+    .chartjs-render-monitor { background: white }
+    @media (max-width: 640px) {
+      .chart-parent { min-height: 350px; }
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col items-center py-8 px-2">
+  <div class="w-full max-w-3xl bg-white rounded-xl shadow-lg p-6 sm:p-10 space-y-8">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+      <h1 class="text-2xl sm:text-3xl font-semibold text-gray-800">
+        Graphical Linear Programming Solver
+      </h1>
+      <button id="load-example"
+        class="px-3 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 text-sm">
+      EXample 
+      </button>
+    </div>
+    <!-- Form -->
+    <form id="lp-form" class="space-y-6" autocomplete="off">
+      <div>
+        <label class="block font-medium text-gray-700 mb-1 flex items-center gap-1">
+          Objective Function
+          <span class="tooltip text-gray-400 text-lg">ⓘ
+            <span class="tooltiptext">
+              E.g.: <b>5x + 3y</b>. Only linear expressions in x and y. Use "+" or "-" between terms.
+            </span>
+          </span>
+        </label>
+        <div class="flex gap-2 items-center">
+          <select id="objective-type"
+            class="rounded border-gray-300 py-1 px-2">
+            <option value="max">Maximize</option>
+            <option value="min">Minimize</option>
+          </select>
+          <span class="text-gray-700 font-bold">Z =</span>
+          <input id="objective-expr"
+            type="text"
+            class="flex-1 rounded border-gray-300 p-2"
+            placeholder="e.g. 5x + 3y"
+            required />
+        </div>
+      </div>
+      <div>
+        <label class="block font-medium text-gray-700 mb-1 flex items-center gap-1">
+          Constraints
+          <span class="tooltip text-gray-400 text-lg">ⓘ
+            <span class="tooltiptext">
+              E.g.: <b>2x + y ≤ 10</b>. Use ≤, ≥, = or their keyboard equivalents (&lt;=, &gt;=, =).
+            </span>
+          </span>
+        </label>
+        <div id="constraints-list" class="space-y-2"></div>
+        <button type="button"
+          id="add-constraint"
+          class="mt-2 px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm">
+          + Add Constraint
+        </button>
+        <div class="text-sm text-gray-500 mt-2">
+          Non-negativity constraints <span class="font-mono">x ≥ 0, y ≥ 0</span> are added automatically.
+        </div>
+      </div>
+      <div class="pt-2">
+        <button
+          type="submit"
+          class="px-6 py-2 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700">
+          Solve
+        </button>
+      </div>
+    </form>
+    <!-- Error Alert -->
+    <div id="alert" class="hidden rounded bg-red-100 border border-red-300 text-red-800 px-4 py-2"></div>
+    <!-- Chart & Solution -->
+    <div id="output" class="space-y-7">
+      <div class="chart-parent relative min-h-[370px]">
+        <canvas id="graph-canvas" height="350"></canvas>
+        <div id="graph-legend" class="absolute top-0 right-0 bg-white/80 rounded px-2 py-1 text-xs text-gray-700"></div>
+      </div>
+      <div id="solution" class="hidden space-y-2 pt-2"></div>
+    </div>
+    <footer class="text-xs text-gray-400 pt-6 text-center">
+      © <span id="year"></span> Two-Variable Graphical LP Solver. Built with HTML, JS, Tailwind CSS, Chart.js.
+    </footer>
+  </div>
+  <!-- Main JS -->
+  <script>
+    // --- GLOBALS & UTILS ---
+    const COLORS = ["#3b82f6", "#16a34a", "#f59e42", "#ef4444", "#a855f7", "#fbbf24"];
+    const DASH_COLOR = "#111827";
+    const FEASIBLE_COLOR = "rgba(34,197,94,0.18)";
+    function htmlEscape(s) {
+      return s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function round2(n) { return Math.round(n * 1000) / 1000; }
+    function showAlert(msg) {
+      const alert = document.getElementById('alert');
+      alert.textContent = msg;
+      alert.classList.remove('hidden');
+    }
+    function hideAlert() {
+      document.getElementById('alert').classList.add('hidden');
+    }
+    function showSolution(html) {
+      const sol = document.getElementById('solution');
+      sol.innerHTML = html;
+      sol.classList.remove('hidden');
+    }
+    function hideSolution() {
+      document.getElementById('solution').classList.add('hidden');
+    }
+    function setYear() { document.getElementById("year").textContent = new Date().getFullYear(); }
+    // --- DYNAMIC CONSTRAINT FIELDS ---
+    function addConstraintField(expr="") {
+      const idx = document.querySelectorAll('.constraint-row').length;
+      const div = document.createElement('div');
+      div.className = "constraint-row flex gap-2 items-center";
+      div.innerHTML = `
+        <input type="text" class="flex-1 rounded border-gray-300 p-2 constraint-input"
+          placeholder="e.g. 2x + y ≤ 10" required value="${htmlEscape(expr)}"/>
+        <button type="button" class="text-red-500 hover:text-red-700 text-xl font-bold remove-constraint"
+          title="Remove constraint" ${idx===0?'disabled':''} tabindex="-1">×</button>
+      `;
+      div.querySelector('.remove-constraint').onclick = () => {
+        if(document.querySelectorAll('.constraint-row').length>1)
+          div.remove();
+      };
+      document.getElementById('constraints-list').appendChild(div);
+    }
+    function getConstraints() {
+      return Array.from(document.querySelectorAll('.constraint-input')).map(el=>el.value.trim());
+    }
+    function setConstraints(exprs) {
+      document.getElementById('constraints-list').innerHTML = '';
+      exprs.forEach(addConstraintField);
+    }
+    // --- LP STRING PARSERS ---
+    function parseLinearExpr(expr) {
+      // "5x + 3y" or "x - 2y" → {a:5, b:3}
+      let cleaned = expr.replace(/\s/g,"").replace(/−/g,"-");
+      let a=0, b=0, re = /([+-]?[\d.]*)(x|y)/g, m;
+      while((m = re.exec(cleaned))!==null) {
+        let v = m[1]===""||m[1]==="+"?1 : m[1]==="-"?-1 : Number(m[1]);
+        if(m[2]==="x") a+=v; else b+=v;
+      }
+      if(!/x|y/.test(cleaned)) throw Error("Expression must include x or y.");
+      return {a,b};
+    }
+    function parseConstraint(expr, idx) {
+      // "2x + y ≤ 10", "x + y >= 6", "x = 3"
+      let cleaned = expr.replace(/\s/g,"").replace(/−/g,"-");
+      let opm = cleaned.match(/(<=|≥|>=|≤|=)/);
+      if(!opm) throw Error(`Constraint "${expr}" missing a valid inequality (≤, ≥, =, <=, >=).`);
+      let op = opm[0];
+      op = op==="≤"? "<=" : op==="≥"? ">=" : op;
+      let [lhs, rhs] = cleaned.split(opm[0]);
+      if(rhs===undefined) throw Error(`Constraint "${expr}" missing a right-hand side.`);
+      let {a,b} = parseLinearExpr(lhs);
+      let c = Number(rhs);
+      if(isNaN(c)) throw Error(`Constraint "${expr}" right-hand side must be a number.`);
+      if(a===0 && b===0) throw Error(`Constraint "${expr}" must have x or y term.`);
+      return {a,b,op,c,label:`C${idx+1}`};
+    }
+    function parseObjective(expr) {
+      let {a:cx, b:cy} = parseLinearExpr(expr);
+      if(cx===0 && cy===0) throw Error("Objective must have x or y term.");
+      return {cx, cy};
+    }
+    // --- GEOMETRY ---
+    function intersect(cons1, cons2) {
+      // a1x + b1y = c1, a2x + b2y = c2
+      const {a:a1,b:b1,c:c1} = cons1, {a:a2,b:b2,c:c2} = cons2;
+      const det = a1*b2 - a2*b1;
+      if(Math.abs(det)<1e-8) return null;
+      const x = (c1*b2 - c2*b1)/det;
+      const y = (a1*c2 - a2*c1)/det;
+      return [x,y];
+    }
+    function satisfies(cons, [x,y]) {
+      const val = cons.a*x + cons.b*y;
+      if(cons.op==="≤"||cons.op==="<=") return val<=cons.c+1e-8;
+      if(cons.op==="≥"||cons.op===">=") return val>=cons.c-1e-8;
+      if(cons.op==="=") return Math.abs(val-cons.c)<1e-7;
+      return false;
+    }
+    function isFeasible(pt, constraints) {
+      return constraints.every(cons => satisfies(cons, pt));
+    }
+    // --- LP SOLVER ---
+    function solveLP(objType, objExpr, constraintsExprs) {
+      // Parse
+      const constraints = constraintsExprs.map((e,i)=>parseConstraint(e,i));
+      constraints.push({a:1, b:0, op:">=", c:0, label:"x ≥ 0"});
+      constraints.push({a:0, b:1, op:">=", c:0, label:"y ≥ 0"});
+      const objective = parseObjective(objExpr);
+      // Find all intersection points
+      let points = [];
+      for(let i=0;i<constraints.length;++i) for(let j=i+1;j<constraints.length;++j) {
+        let pt = intersect(constraints[i], constraints[j]);
+        if(pt && isFinite(pt[0]) && isFinite(pt[1])) points.push(pt);
+      }
+      // Filter feasible points
+      let feasible = points.filter(pt=>isFeasible(pt,constraints));
+      // Remove duplicates, round for robustness
+      const uniq = [];
+      feasible.forEach(pt=>{
+        let rounded = pt.map(round2);
+        if(!uniq.some(u=>Math.abs(u[0]-rounded[0])<1e-5 && Math.abs(u[1]-rounded[1])<1e-5))
+          uniq.push(rounded);
+      });
+      if(uniq.length<3) {
+        // Test if bounded: check if any direction is unbounded
+        let test = [ [10000,0], [0,10000], [10000,10000], [-10000,0],[0,-10000],[-10000,-10000] ];
+        let anyFeasible = test.some(pt=>isFeasible(pt,constraints));
+        if(anyFeasible) throw Error("Problem is unbounded (feasible region is infinite).");
+        throw Error("No bounded feasible region found (problem infeasible or degenerate).");
+      }
+      // Order vertices of polygon (by polar angle from centroid)
+      const cx = uniq.reduce((s,p)=>s+p[0],0)/uniq.length, cy = uniq.reduce((s,p)=>s+p[1],0)/uniq.length;
+      uniq.sort((a,b)=>{
+        let angA = Math.atan2(a[1]-cy,a[0]-cx), angB = Math.atan2(b[1]-cy,b[0]-cx);
+        return angA-angB;
+      });
+      // Optimal solution
+      let val = pt=>objective.cx*pt[0]+objective.cy*pt[1];
+      let bestPt = uniq[0], bestVal = val(uniq[0]);
+      for(let pt of uniq) {
+        let v = val(pt);
+        if(objType==="max" ? v>bestVal : v<bestVal) { bestVal = v; bestPt = pt; }
+      }
+      return {
+        vertices: uniq,
+        constraints,
+        objective: {...objective, type: objType},
+        optimal: { point: bestPt, value: bestVal }
+      };
+    }
+    // --- CHART RENDERER ---
+    let chart = null;
+    function drawGraph({vertices, constraints, objective, optimal}) {
+      // Determine axis ranges
+      let allX = vertices.map(v=>v[0]), allY = vertices.map(v=>v[1]);
+      let minX = Math.floor(Math.min(...allX,0)), maxX = Math.ceil(Math.max(...allX,1));
+      let minY = Math.floor(Math.min(...allY,0)), maxY = Math.ceil(Math.max(...allY,1));
+      if(maxX-minX<2) maxX = minX+2;
+      if(maxY-minY<2) maxY = minY+2;
+      // Generate constraint lines
+      let datasets = [];
+      let legendHtml = "";
+      constraints.forEach((cons,i)=>{
+        let color = COLORS[i%COLORS.length];
+        let points = [];
+        // Plot within plotting area
+        for(let x=minX-1;x<=maxX+1;x+=0.5) {
+          // ax + by = c -> y = (c-ax)/b, unless b==0
+          if(Math.abs(cons.b)>1e-8) {
+            let y = (cons.c - cons.a*x)/cons.b;
+            if(y>=minY-2 && y<=maxY+2) points.push({x, y});
+          }
+        }
+        for(let y=minY-1;y<=maxY+1;y+=0.5) {
+          // ax + by = c -> x = (c-by)/a, unless a==0
+          if(Math.abs(cons.a)>1e-8) {
+            let x = (cons.c - cons.b*y)/cons.a;
+            if(x>=minX-2 && x<=maxX+2) points.push({x, y});
+          }
+        }
+        // Remove duplicates
+        points = points.filter((pt,i,arr)=>arr.findIndex(p=>Math.abs(p.x-pt.x)<1e-5&&Math.abs(p.y-pt.y)<1e-5)===i);
+        // Order by x then y
+        points.sort((a,b)=>a.x-b.x || a.y-b.y);
+        // Only keep points within plot area
+        points = points.filter(p=>p.x>=minX-1&&p.x<=maxX+1&&p.y>=minY-1&&p.y<=maxY+1);
+        // Make line
+        datasets.push({
+          label: cons.label,
+          data: points,
+          parsing:{x:'x',y:'y'},
+          showLine: true,
+          borderColor: color,
+          backgroundColor: color,
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 0,
+        });
+        legendHtml += `<div><span class="inline-block w-3 h-3 rounded-full" style="background:${color}"></span> ${htmlEscape(cons.label)}: <span class="text-xs text-gray-500">${htmlEscape(renderConstraint(cons))}</span></div>`;
+      });
+      // Feasible region polygon
+      datasets.push({
+        label: "Feasible Region",
+        data: vertices.concat([vertices[0]]).map(([x,y])=>({x,y})),
+        parsing:{x:'x',y:'y'},
+        showLine: true,
+        borderColor: FEASIBLE_COLOR,
+        backgroundColor: FEASIBLE_COLOR,
+        borderWidth: 0,
+        fill: true,
+        pointRadius: 0,
+        order: -1
+      });
+      // Vertices
+      datasets.push({
+        label:"Vertices",
+        data: vertices.map(([x,y])=>({x,y})),
+        parsing:{x:'x',y:'y'},
+        showLine: false,
+        pointBackgroundColor: "#0ea5e9",
+        pointRadius: 5,
+        pointHoverRadius: 6,
+        type: "scatter",
+        order: 2
+      });
+      // Optimal point
+      datasets.push({
+        label:"Optimal Solution",
+        data: [ {x:optimal.point[0], y:optimal.point[1]} ],
+        parsing:{x:'x',y:'y'},
+        showLine: false,
+        pointBackgroundColor: "#be185d",
+        pointBorderColor: "#be185d",
+        pointRadius: 7,
+        pointHoverRadius: 9,
+        type: "scatter",
+        order: 3
+      });
+      // Objective function (dashed)
+      let obj = objective, {cx, cy, type} = obj;
+      // Plot through optimal point: cx x + cy y = v
+      let objLine = [];
+      if(Math.abs(cy)>1e-8) {
+        // y = (v - cx*x)/cy, for x in [minX-1, maxX+1]
+        for(let x=minX-1;x<=maxX+1;x+=0.5) {
+          let y = (optimal.value - cx*x)/cy;
+          if(y>=minY-2 && y<=maxY+2) objLine.push({x,y});
+        }
+      }
+      if(Math.abs(cx)>1e-8) {
+        for(let y=minY-1;y<=maxY+1;y+=0.5) {
+          let x = (optimal.value - cy*y)/cx;
+          if(x>=minX-2 && x<=maxX+2) objLine.push({x,y});
+        }
+      }
+      objLine = objLine.filter((pt,i,arr)=>arr.findIndex(p=>Math.abs(p.x-pt.x)<1e-5&&Math.abs(p.y-pt.y)<1e-5)===i);
+      datasets.push({
+        label:"Objective Function",
+        data: objLine,
+        parsing:{x:'x',y:'y'},
+        borderColor: DASH_COLOR,
+        borderWidth: 2,
+        borderDash: [8,6],
+        fill: false,
+        showLine:true,
+        pointRadius: 0,
+        order: 1
+      });
+      // Destroy previous
+      if(chart) chart.destroy();
+      chart = new Chart(document.getElementById('graph-canvas').getContext('2d'), {
+        type:"scatter",
+        data:{datasets: datasets},
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          plugins:{
+            legend:{display:false},
+            tooltip:{enabled:true, callbacks:{
+              label:(ctx)=>{
+                if(ctx.dataset.label==="Vertices"||ctx.dataset.label==="Optimal Solution")
+                  return `(${round2(ctx.parsed.x)}, ${round2(ctx.parsed.y)})`;
+                return null;
+              }
+            }},
+          },
+          scales:{
+            x:{
+              type:"linear",
+              min:minX-1, max:maxX+1,
+              title:{display:true, text:"x", font:{weight:'bold'}},
+              grid:{color:"#e5e7eb"},
+              ticks:{stepSize:1}
+            },
+            y:{
+              type:"linear",
+              min:minY-1, max:maxY+1,
+              title:{display:true, text:"y", font:{weight:'bold'}},
+              grid:{color:"#e5e7eb"},
+              ticks:{stepSize:1}
+            }
+          }
+        }
+      });
+      document.getElementById('graph-legend').innerHTML = legendHtml;
+    }
+    function renderConstraint(c) {
+      let s = (c.a!==0? (c.a===1?"":(c.a===-1?"-":c.a))+"x":"") +
+              (c.b!==0? (c.b>0&&c.a!==0?"+":"")+(c.b===1?"":(c.b===-1?"-":c.b))+"y":"") +
+              " " + (c.op===">="? "≥":c.op==="<="? "≤":"=") + " " + c.c;
+      return s;
+    }
+    // --- SOLUTION DISPLAY ---
+    function renderSolution({vertices, constraints, objective, optimal}) {
+      let objStr = (objective.type==="max"?"Maximize":"Minimize") + " Z = " +
+        (objective.cx!==0? (objective.cx===1?"":(objective.cx===-1?"-":objective.cx))+"x":"") +
+        (objective.cy!==0? (objective.cy>0&&objective.cx!==0?"+":"")+(objective.cy===1?"":(objective.cy===-1?"-":objective.cy))+"y": "");
+      let vertList = vertices.map(([x,y])=>`(${round2(x)}, ${round2(y)})`).join(", ");
+      let html = `
+        <div class="font-medium text-lg text-gray-700">Solution</div>
+        <div class="text-gray-700">
+          <span class="font-semibold">Objective:</span> ${htmlEscape(objStr)}
+        </div>
+        <div class="text-gray-700">
+          <span class="font-semibold">Optimal Point:</span>
+          <span class="text-pink-700 font-semibold text-base">(${round2(optimal.point[0])}, ${round2(optimal.point[1])})</span>
+        </div>
+        <div class="text-gray-700">
+          <span class="font-semibold">Objective Value:</span>
+          <span class="text-blue-700 font-semibold text-base">${round2(optimal.value)}</span>
+        </div>
+        <div class="text-gray-700">
+          <span class="font-semibold">Feasible Region Vertices:</span>
+          <span>${vertList}</span>
+        </div>
+      `;
+      return html;
+    }
+    // --- EXAMPLE ---
+    const EXAMPLE = {
+      objectiveType: "max",
+      objectiveExpr: "5x + 3y",
+      constraints: [
+        "2x + y ≤ 10",
+        "x + y ≤ 6",
+        "x ≤ 4"
+      ]
+    };
+    function loadExample() {
+      document.getElementById("objective-type").value = EXAMPLE.objectiveType;
+      document.getElementById("objective-expr").value = EXAMPLE.objectiveExpr;
+      setConstraints(EXAMPLE.constraints);
+      hideAlert(); hideSolution();
+      if(chart) chart.destroy();
+      document.getElementById("graph-legend").innerHTML = "";
+    }
+    // --- FORM HANDLERS ---
+    document.addEventListener("DOMContentLoaded",()=>{
+      setYear();
+      setConstraints([""]);
+      document.getElementById("add-constraint").onclick = ()=>addConstraintField("");
+      document.getElementById("load-example").onclick = loadExample;
+      document.getElementById("lp-form").onsubmit = function(e){
+        e.preventDefault();
+        hideAlert();
+        hideSolution();
+        if(chart) chart.destroy();
+        document.getElementById("graph-legend").innerHTML = "";
+        // Read inputs
+        const objType = document.getElementById("objective-type").value;
+        const objExpr = document.getElementById("objective-expr").value.trim();
+        const constraints = getConstraints();
+        // Validate
+        if(!objExpr) return showAlert("Objective function is required.");
+        if(constraints.some(c=>!c)) return showAlert("Please fill in all constraint fields.");
+        try {
+          const sol = solveLP(objType, objExpr, constraints);
+          drawGraph(sol);
+          showSolution(renderSolution(sol));
+        } catch (e) {
+          showAlert(e.message||"An error occurred while solving.");
+        }
+      };
+    });
+  </script>
+</body>
+</html>
